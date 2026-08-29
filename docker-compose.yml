@@ -1,0 +1,11 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=docker-compose
+      - PORT=8000
+    volumes:
+      - ./:/fastapi-notes          # mount source so code changes reflect without rebuilding
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
