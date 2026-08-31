@@ -1,66 +1,53 @@
-from uuid import UUID, uuid4
+import time
 
-from fastapi import FastAPI, HTTPException, status
-from pydantic import BaseModel, Field
+import pymupdf
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="Notes API", version="1.0.0")
+app = FastAPI(title="Extraction API", version="1.0.0")
 
-
-class NoteIn(BaseModel):
-    text: str
-    done: bool = False
-
-
-class Note(NoteIn):
-    id: UUID = Field(default_factory=uuid4)
-
-
-notes: list[Note] = []
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_methods=["POST"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 def root():
-    return {"message": "Notes API is running!"}
-
+    return {"message": "Extraction is running!"}
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
+@app.post("/extract")
+async def extract(file: UploadFile = File(...)):
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
-@app.get("/notes")
-def list_notes():
-    return notes
+    contents = await file.read()
 
+    try:
+        doc = pymupdf.open(stream=contents, filetype="pdf")
+    except pymupdf.FileDataError:
+        raise HTTPException(status_code=400, detail="Could not read PDF file")
 
-@app.get("/notes/{note_id}")
-def get_note(note_id: UUID):
-    for note in notes:
-        if note.id == note_id:
-            return note
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
+    start = time.perf_counter()
 
+    pages = []
 
-@app.post("/notes", status_code=status.HTTP_201_CREATED)
-def create_note(note_in: NoteIn):
-    note = Note(text=note_in.text, done=note_in.done)
-    notes.append(note)
-    return {**note.model_dump()}
+    for page in doc:
+        pages.append(page.get_text())
 
+    text = "\n".join(pages)
 
-@app.put("/notes/{note_id}")
-def update_note(note_id: UUID, note_in: NoteIn):
-    for note_index, note in enumerate(notes):
-        if note.id == note_id:
-            notes[note_index] = Note(id=note_id, text=note_in.text, done=note_in.done)
-            return notes[note_index]
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
+    extraction_seconds = time.perf_counter() - start
 
+    doc.close()
 
-@app.delete("/notes/{note_id}")
-def delete_note(note_id: UUID):
-    for note_index, note in enumerate(notes):
-        if note.id == note_id:
-            _ = notes.pop(note_index)
-
-    return {"message": "Note deleted successfully"}
+    return {
+        "filename": file.filename,
+        "text": text,
+        "extraction_seconds": extraction_seconds,
+    }
